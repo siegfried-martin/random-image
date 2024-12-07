@@ -1,7 +1,8 @@
 import random_phrase
-import scraper
-import time
-from multiprocessing import Process
+import spawner
+import urllib.request
+from PIL import Image
+
 
 import argparse
 import shutil
@@ -9,6 +10,7 @@ import os
 import zipfile
 from datetime import datetime
 import re
+import random
 
 import argparse
 
@@ -16,7 +18,7 @@ parser = argparse.ArgumentParser(description='gets google search images based on
 
 parser.add_argument('-n', '--num_images', help='number of images to download per process (default 3)', default="3", type=int)
 parser.add_argument('-t', '--times_to_run', help='number of times a new phrase is generated and images are fetched (default 1)', default="1", type=int)
-parser.add_argument('-p', '--processes', help='number of concurrent processes for fetching images', default="1", type=int)
+parser.add_argument('-p', '--processes', help='number of concurrent processes for fetching images (default 1)', default="1", type=int)
 parser.add_argument('-c', '--clean', help='purge existing files to archive', action='store_true')
 parser.add_argument('-C', '--force_clean', help='purge existing files to archive and exit application', action='store_true')
 
@@ -47,36 +49,58 @@ def move_new_images(files):
         except:
             pass
 
+import inspect
+
+def print_line_number():
+    print("image_fetcher", "Line number:", inspect.currentframe().f_back.f_lineno)
+
+def downloadImage(url):
+    url_no_query = url.split("?")[0]
+    extention = url_no_query.split(".")[-1] or "jpg"
+    now = datetime.now()
+    formatted_datetime = now.strftime("%Y-%m-%d_%H-%M-%S")
+    filename = f"current_images/_data_{formatted_datetime}-{random.randint(1000, 9999)}.{extention}"
+    with open(filename, "w") as new_imagefile:
+        try: 
+            urllib.request.urlretrieve(url, filename)
+        except Exception as e:
+            print("failed first time grabbing doc", e)
+            urllib.request.urlretrieve(url, filename)
+    if is_image_corrupt(filename):
+        print(f"corrupt image {filename}")
+        raise Exception("image corrupt")
+    return filename
+
+def is_image_corrupt(image_path):
+    try:
+        img = Image.open(image_path)
+        img.verify()  # Verify the image integrity
+        return False  # Image is not corrupt
+    except (IOError, SyntaxError) as e:
+        return True  # Image is likely corrupt
+
 
 def fetch_images():
-    try:
-        wait_time = 20 + (args.processes * 10)
-        processes = []
-        for i in range(0, args.processes):
-            phrase = random_phrase.getRandomPhrase()
-            print(phrase)
-            p = Process(target=scraper.fetch_images, args = (phrase, 3, args.num_images,))
-            p.start()
-            processes.append(p)
-            open("current_images/"+phrase.replace(" ", "_"), "w")
-        time_count = 0
-        while time_count < wait_time:
-            running = False
-            for p in processes:
-                if p.is_alive():
-                    running = True
-            if not running:
-                break;
-            #print("waiting at time", time_count)
-            time_count += 1
-            time.sleep(1)
-        for p in processes:
-            p.kill()
-
-    except Exception as e:
-        print("unhandled exception in scraper")
-        raise(e)
-        return
+    driver = spawner.Scraper_Spawner(args.num_images)
+    for i in range(0, args.times_to_run):
+        phrases = []
+        for j in range(0, args.processes):
+            phrases.append(random_phrase.getRandomPhrase())
+        results = driver.run(phrases)
+        for result in results:
+            image_downloads = []
+            for url in result.image_urls:
+                try:
+                    image_downloads.append([downloadImage(url), url])
+                except Exception as e:
+                    print("error downloading file", url, e)
+                    #raise e
+            if len(image_downloads):
+                filename = f"current_images/{result.phrase}.txt"
+                file_contents = "\n".join(" | ".join(a) for a in image_downloads)
+                f = open(filename, "w")
+                f.write(file_contents)
+                f.close()
 
 if __name__ == '__main__':    
     
@@ -85,8 +109,10 @@ if __name__ == '__main__':
         exit()
     if args.clean:
         clean_results()
-    for i in range(0, args.times_to_run):
-        fetch_images()
+    fetch_images()
+    print_line_number()
+    exit()
+    print("active threads", threading.enumerate())
 
 
 
